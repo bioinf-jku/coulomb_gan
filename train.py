@@ -155,7 +155,7 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
     merged_smry = tf.summary.merge_all()
 
     fid_stats_file = options.fid_stats % dataset.lower()
-    assert pathlib.Path(fid_stats_file).exists(), "Can't find training set statistics for FID"
+    assert Path(fid_stats_file).exists(), "Can't find training set statistics for FID"
     f = np.load(fid_stats_file)
     mu_fid, sigma_fid = f['mu'][:], f['sigma'][:]
     f.close()
