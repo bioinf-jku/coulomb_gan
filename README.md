@@ -1,6 +1,6 @@
 # Coulomb GAN
 
-This repository contains an implementation of Coulomb GANs as depicted in the paper "Coulomb GANs: Provably Optimal Nash Equilibria via Potential Fields" by Unterthiner et al.
+This repository contains an implementation of Coulomb GANs as described in [Coulomb GANs: Provably Optimal Nash Equilibria via Potential Fields](https://arxiv.org/abs/1708.08819) by Unterthiner et al.
 
 ## Reproducing Paper results
 As a first step, adjust the path to the datasets in `get_dataset_path` in the file `utils.py`.
