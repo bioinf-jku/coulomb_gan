@@ -48,7 +48,7 @@ def began_generator(z, img_shape, l2_penalty, act_fn=tf.nn.elu, out_fn=None):
     reg = tf.contrib.layers.l2_regularizer(l2_penalty) if l2_penalty > 0.0 else None
 
     layers = []
-    n_repeat = 4
+    n_repeat = int(np.log2(img_shape[0] / 8)) + 1
     n_hidden = 128
     l = tf.layers.dense(z, 8*8*n_hidden, activation=None, kernel_regularizer=reg)
     layers.append(l)
@@ -92,55 +92,68 @@ def create_generator(z, img_shape, l2_penalty, generator_type, batch_size=None, 
 #-------------------------------------
 
 
-def dcgan_discriminator(l, l2_penalty, n_output, n_hidden=64, out_fn=None, reuse=False):
+def dcgan_discriminator(l, l2_penalty, n_output, n_hidden=64, out_fn=None):
     reg = tf.contrib.layers.l2_regularizer(l2_penalty) if l2_penalty > 0.0 else None
-    with tf.variable_scope("dcgan", reuse=reuse):
-        layers = []
-        leaky_alpha = 0.2
+    layers = []
+    leaky_alpha = 0.2
+    n_repeat = int(np.log2(int(l.get_shape()[0]) / 8))
+    for i in range(n_repeat):
         l = tf.layers.conv2d(l, n_hidden, kernel_size=5, strides=2, padding='same', activation=None, kernel_regularizer=reg)
         l = tf.layers.batch_normalization(l, training=True)
         l = tf.maximum(leaky_alpha*l, l)
         layers.append(l)
+        n_hidden *= 2
 
-        l = tf.layers.conv2d(l, n_hidden*2, kernel_size=5, strides=2, padding='same', activation=None, kernel_regularizer=reg)
-        l = tf.layers.batch_normalization(l, training=True)
-        l = tf.maximum(leaky_alpha*l, l)
-        layers.append(l)
+    l = tf.reshape(l, [tf.shape(l)[0], np.prod(l.get_shape().as_list()[1:])])
+    l = tf.layers.dense(l, n_output, activation=out_fn)
+    layers.append(l)
+    return layers
 
-        l = tf.layers.conv2d(l, n_hidden*4, kernel_size=5, strides=2, padding='same', activation=None, kernel_regularizer=reg)
-        l = tf.layers.batch_normalization(l, training=True)
-        l = tf.maximum(leaky_alpha*l, l)
-        layers.append(l)
 
-        l = tf.layers.conv2d(l, n_hidden*8, kernel_size=5, strides=2, padding='same', activation=None, kernel_regularizer=reg)
-        l = tf.layers.batch_normalization(l, training=True)
-        l = tf.maximum(leaky_alpha*l, l)
-        layers.append(l)
 
-        l = tf.reshape(l, [tf.shape(l)[0], np.prod(l.get_shape().as_list()[1:])])
-        l = tf.layers.dense(l, n_output, activation=out_fn)
+def began_autoencoder(x, l2_penalty=0.0, n_hidden=128, n_output=64, out_fn=None, trainable=True):
+    l = x
+    layers = []
+    act_fn = tf.nn.elu
+    n_repeat = int(np.log2(int(l.get_shape()[0]) / 8)) + 1
+    reg = tf.contrib.layers.l2_regularizer(l2_penalty) if l2_penalty > 0.0 else None
+    init = get_initializer(act_fn)
+    l = tf.layers.conv2d(l, n_hidden, 3, 1, activation=act_fn, padding='same', trainable=trainable, kernel_initializer=init)
+    layers.append(l)
+    for idx in range(n_repeat):
+        n_channel = n_hidden * (idx + 1)
+        l = tf.layers.conv2d(l, n_channel, 3, 1, activation=act_fn, padding='same',
+                             trainable=trainable, kernel_regularizer=reg, kernel_initializer=init)
         layers.append(l)
+        l = tf.layers.conv2d(l, n_channel, 3, 1, activation=act_fn, padding='same',
+                             trainable=trainable, kernel_regularizer=reg, kernel_initializer=init)
+        layers.append(l)
+        if idx < n_repeat - 1:
+            l = tf.layers.conv2d(l, n_channel, 3, 2, activation=act_fn, padding='same',
+                                 trainable=trainable, kernel_regularizer=reg, kernel_initializer=init)
+            layers.append(l)
+
+    l = tf.reshape(l, [tf.shape(l)[0], np.prod(l.get_shape().as_list()[1:])])
+    l = tf.layers.dense(l, n_output, activation=out_fn)
+    layers.append(l)
+    print('\n'.join([str(l) for l in layers]))
     return layers
 
 
 def create_discriminator(x, discriminator_type, l2_penalty, reuse_vars):
     out_fn = None
     discriminators =  {
-        'dcgan': lambda a, r: dcgan_discriminator(a, n_output=1, l2_penalty=l2_penalty, out_fn=out_fn, reuse=r),
-        'dcgan-big': lambda a, r: dcgan_discriminator(a, n_output=1, n_hidden=128, l2_penalty=l2_penalty, out_fn=out_fn, reuse=r),
-        'dcgan-big2': lambda a, r: dcgan_discriminator(a, n_output=1, n_hidden=256, l2_penalty=l2_penalty, out_fn=out_fn, reuse=r),
+        'began': lambda a: began_autoencoder(a, n_output=1, n_hidden=128, l2_penalty=l2_penalty, out_fn=out_fn),
+        'dcgan': lambda a: dcgan_discriminator(a, n_output=1, l2_penalty=l2_penalty, out_fn=out_fn),
+        'dcgan-big': lambda a: dcgan_discriminator(a, n_output=1, n_hidden=128, l2_penalty=l2_penalty, out_fn=out_fn),
+        'dcgan-big2': lambda a: dcgan_discriminator(a, n_output=1, n_hidden=256, l2_penalty=l2_penalty, out_fn=out_fn),
     }
 
     disc_fn = discriminators[discriminator_type]
     if discriminator_type not in discriminators.keys():
         raise RuntimeError("Unknown discriminator: %s" % discriminator)
 
-    # TODO: we should just deploy the 'reuse' here, instead of nesting 2 variable scopes
-    with tf.variable_scope("discriminator") as vs:
-        if 'fc' in discriminator_type:
-            x = tf.reshape(x, [-1, np.prod(x.get_shape().as_list()[1:])])
-
-        disc_out = disc_fn(x, reuse_vars)[-1]
-        #layers_y = disc_fn(y, True)
+    with tf.variable_scope("discriminator", reuse=reuse_vars) as vs:
+        disc_out = disc_fn(x)[-1]
 
     return disc_out

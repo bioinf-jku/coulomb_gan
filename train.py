@@ -73,15 +73,10 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
     disc_x = create_discriminator(x, discriminator_type, options.l2_penalty, False)
     disc_y = create_discriminator(y, discriminator_type, options.l2_penalty, True)
 
-    x_old = tf.get_variable("x_old", shape=x.shape, initializer=tf.zeros_initializer(), trainable=False)
-    disc_x_old = create_discriminator(x_old, discriminator_type, options.l2_penalty, True)
-    disc_x_old = tf.reshape(disc_x_old, [-1])
-
     with tf.name_scope('loss'):
         disc_x = tf.reshape(disc_x, [-1])
         disc_y = tf.reshape(disc_y, [-1])
         pot_x, pot_y = get_potentials(x, y, kernel_dimension, epsilon)
-        pot_x_old = calculate_potential(x, y, x_old, kernel_dimension, epsilon)
 
         if options.disc_loss == 'l2':
             disc_loss_fn = tf.losses.mean_squared_error
@@ -96,6 +91,10 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
         loss_g = tf.reduce_mean(disc_x)
 
         if options.remember_previous:
+            x_old = tf.get_variable("x_old", shape=x.shape, initializer=tf.zeros_initializer(), trainable=False)
+            disc_x_old = create_discriminator(x_old, discriminator_type, options.l2_penalty, True)
+            disc_x_old = tf.reshape(disc_x_old, [-1])
+            pot_x_old = calculate_potential(x, y, x_old, kernel_dimension, epsilon)
             loss_d_x_old = disc_loss_fn(pot_x_old, disc_x_old)
             loss_d += loss_d_x_old
 
@@ -233,14 +232,14 @@ def setup_argumentparser():
     parser.add_argument("-l", "--learningrate", type=float, help='learning rate', default=1e-4)
     parser.add_argument("--gpu", type=str, help='GPU to use (leave blank for CPU only)', default="")
     parser.add_argument("-g", "--generator", default='dcgan', choices=['dcgan','began'])
-    parser.add_argument("-d", "--discriminator", default='dcgan', choices=['none', 'dcgan', 'dcgan-big', 'dcgan-big2'])
+    parser.add_argument("-d", "--discriminator", default='dcgan', choices=['began', 'dcgan', 'dcgan-big', 'dcgan-big2'])
     parser.add_argument("--l2_penalty", type=float, help="L2 weight decay term", default=0.0)
     parser.add_argument("--gen_l2p_scale", type=float, help="L2 weight decay scaling term for generator", default=1.0)
     parser.add_argument("--discriminator_lr_scale", type=float, help="LR scaling for the discriminator", default=1)
     parser.add_argument("--dimension", type=int, help='Dimension for the kernel function', default=3)
     parser.add_argument("--epsilon", type=float, help='epsilon', default=1.0)
     parser.add_argument("--threads", type=int, help='number of input threads', default=2)
-    parser.add_argument("--dataset", choices=['celebA', 'lsun', 'mnist', 'cifar10'], default='celebA')
+    parser.add_argument("--dataset", choices=['celebA', 'lsun', 'cifar10'], default='celebA')
     parser.add_argument("--resume_checkpoint", type=str, help='path to model from which to resume', default='')
     parser.add_argument("--checkpoint_every", type=int, help='how often to create a new checkpoint', default=25000)
     parser.add_argument("--logdir", type=str, help='directory for TF logs and summaries', default=default_logdir)
