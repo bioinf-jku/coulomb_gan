@@ -27,7 +27,21 @@ def sample_images(img_tensor, sess, n_batches, path=None):
             imsave(path / ("%05d.png" % i), img)
     return images
 
-
+def sample_text(text_tensor, sess, n_batches, inv_charmap, path, cur_iter):
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+    outputs = [sess.run(text_tensor) for i in range(n_batches)]
+    outputs = np.argmax(np.vstack(outputs), axis=2)
+    with open(str(path / ('sample_%09d.txt' % cur_iter)), 'w', encoding='utf-8') as f:
+        for s in outputs:
+            decoded = []
+            for c in s:
+                decoded.append(inv_charmap[c])
+            f.write("".join(decoded) + "\n")
+    
+    return outputs
+    
+    
 def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimension, epsilon, learning_rate, batch_size, options, logdir_base='/tmp'):
     if dataset in ['billion_word']:
         dataset_type = 'text'
@@ -78,6 +92,7 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
         y = load_image_dataset(dataset_pattern, batch_size, img_shape, n_threads=options.threads)
     z = tf.random_normal([batch_size, latentsize], dtype=dtype, name="z")
     x = create_generator(z, img_shape, options.l2_penalty*options.gen_l2p_scale, generator_type, batch_size, out_fn=out_fn)
+    sample_text_tensor = create_generator(z, img_shape, options.l2_penalty*options.gen_l2p_scale, generator_type, batch_size, out_fn=out_fn, train=False)
     assert x.get_shape().as_list()[1:] == y.get_shape().as_list()[1:], "X and Y have different shapes: %s vs %s" % (x.get_shape().as_list(), y.get_shape().as_list())
 
     disc_x = create_discriminator(x, discriminator_type, options.l2_penalty, False)
@@ -128,13 +143,15 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
         train_op = tf.group(train_op, assign_x_op)
 
     # Tensorboard summaries
-    x_img = (tf.clip_by_value(x, -1.0, 1.0) + 1) / 2.0
-    y_img = tf.clip_by_value((y + 1) / 2, 0.0, 1.0)
+    if dataset_type == 'image':
+      x_img = (tf.clip_by_value(x, -1.0, 1.0) + 1) / 2.0
+      y_img = tf.clip_by_value((y + 1) / 2, 0.0, 1.0)
     if options.create_summaries:
-        with tf.name_scope("distances"):
-            tf.summary.histogram("xx", generate_all_distances(x, x))
-            tf.summary.histogram("xy", generate_all_distances(x, y))
-            tf.summary.histogram("yy", generate_all_distances(y, y))
+        if dataset_type == 'image':
+            with tf.name_scope("distances"):
+                tf.summary.histogram("xx", generate_all_distances(x, x))
+                tf.summary.histogram("xy", generate_all_distances(x, y))
+                tf.summary.histogram("yy", generate_all_distances(y, y))
         with tf.name_scope('discriminator_stats'):
             tf.summary.histogram('output_x', disc_x)
             tf.summary.histogram('output_y', disc_y)
@@ -145,8 +162,9 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
             tf.summary.histogram('y', pot_y)
             if options.remember_previous:
                 tf.summary.histogram('x_old', pot_x_old)
-        img_smry = tf.summary.image("out_img", x_img, 2)
-        img_smry = tf.summary.image("in_img", y_img, 2)
+        if dataset_type == 'image':
+            img_smry = tf.summary.image("out_img", x_img, 2)
+            img_smry = tf.summary.image("in_img", y_img, 2)
         with tf.name_scope("losses"):
             tf.summary.scalar('loss_d_x', loss_d_x)
             tf.summary.scalar('loss_d_y', loss_d_y)
@@ -164,14 +182,15 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
                     continue
                 tf.summary.scalar("act_"+op.name, tf.reduce_mean(op.outputs[0]))
     merged_smry = tf.summary.merge_all()
-
-    fid_stats_file = options.fid_stats % dataset.lower()
-    assert Path(fid_stats_file).exists(), "Can't find training set statistics for FID"
-    f = np.load(fid_stats_file)
-    mu_fid, sigma_fid = f['mu'][:], f['sigma'][:]
-    f.close()
-    inception_path = fid.check_or_download_inception(options.inception_path)
-    fid.create_inception_graph(inception_path)
+    
+    if dataset_type == 'image':
+        fid_stats_file = options.fid_stats % dataset.lower()
+        assert Path(fid_stats_file).exists(), "Can't find training set statistics for FID"
+        f = np.load(fid_stats_file)
+        mu_fid, sigma_fid = f['mu'][:], f['sigma'][:]
+        f.close()
+        inception_path = fid.check_or_download_inception(options.inception_path)
+        fid.create_inception_graph(inception_path)
 
     maxv = 0.05
     cmap = plt.cm.ScalarMappable(mpl.colors.Normalize(-maxv, maxv), cmap=plt.cm.RdBu)
@@ -208,8 +227,12 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
         for cur_iter in range(max_iter+1): # +1 so we are more likely to get a model/stats line at the end
 
             sess.run(train_op)
-            print_stats = cur_iter % 5000 == 0 #or (cur_iter < 1000 and cur_iter % 100 == 0) or (cur_iter == max_iter - 1)
-            if print_stats:
+                
+            if (cur_iter > 0) and (cur_iter % options.checkpoint_every == 0):
+                saver.save(sess, str(logdir / 'model'), global_step=cur_iter)
+                    
+            print_stats = cur_iter % options.print_stats_interval == 0 #or (cur_iter < 1000 and cur_iter % 100 == 0) or (cur_iter == max_iter - 1)
+            if print_stats and dataset_type == 'image':
                 smry, xx_img = sess.run([merged_smry, x_img])
                 log.add_summary(smry, cur_iter)
 
@@ -221,12 +244,32 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
                 fig = plot_tiles(xx_img, 10, 10, local_norm="none", figsize=(6.6, 6.6))
                 fig.savefig(str(logdir / ('%09d.png' % cur_iter)))
                 plt.close(fig)
-                if (cur_iter > 0) and (cur_iter % options.checkpoint_every == 0):
-                    saver.save(sess, str(logdir / 'model'), global_step=cur_iter)
                 if trainlog:
                     print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
                 print_info("%9d  %3.2f -- %3.2fs %s %s" % s, options.verbosity > 0)
-
+                
+            if print_stats and dataset_type == 'text':
+                if merged_smry != None:
+                    smry = sess.run(merged_smry)
+                    log.add_summary(smry, cur_iter)
+                    
+                sample_text_ = sample_text(sample_text_tensor, sess, 10, inv_charmap, logdir / 'samples', cur_iter)
+                gen_ngram_model = ngram_language_model.NgramLanguageModel(sample_text_, options.ngrams, len(charmap))
+                js = []
+                for i in range(options.ngrams):
+                    js.append(true_ngram_model.js_with(gen_ngram_model, i+1))
+                    print('js%d' % (i+1), js[i])
+                s = [cur_iter] + js + [time.time() - t0, dataset, run_name]
+                if trainlog:
+                    print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
+                if options.ngrams >= 6:
+                    s = (cur_iter, js[3], js[5], time.time() - t0, dataset, run_name)
+                    print_info("%9d  %3.4f -- %3.4f -- %3.2fs %s %s" % s, options.verbosity > 0)
+                elif options.ngrams >= 4:
+                    s = (cur_iter, js[3], time.time() - t0, dataset, run_name)
+                    print_info("%9d  %3.4f -- %3.2fs %s %s" % s, options.verbosity > 0)
+                    
+                    
         if trainlog:
             trainlog.close()
         coord.request_stop()
@@ -273,6 +316,7 @@ def setup_argumentparser():
     parser.add_argument("--inception_path", type=str, help='Path to Inception model', default='/publicwork/coulomb_gan')
     parser.add_argument("--fid_stats", type=str, help='Path to statistics for FID (%s will be replaced by the passed dataset)', default='./fid_stats_%s.npz')
     parser.add_argument("--verbosity", help="verbosity level", type=int, default=1)
+    parser.add_argument("--print_stats_interval", help="how often stats should be printed", type=int, default=5000)
     return parser
 
 def check_args(options):
