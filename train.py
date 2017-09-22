@@ -110,8 +110,10 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
 
     vars_d = [v for v in tf.global_variables() if v.name.startswith('discriminator')]
     vars_g = [v for v in tf.global_variables() if v.name.startswith('generator')]
-    optim_d = tf.train.AdamOptimizer(learning_rate*options.discriminator_lr_scale)
-    optim_g = tf.train.AdamOptimizer(learning_rate)
+    optim_d = tf.train.AdamOptimizer(learning_rate*options.discriminator_lr_scale,
+                                     beta1=options.discriminator_beta1,
+                                     beta2=options.discriminator_beta2)
+    optim_g = tf.train.AdamOptimizer(learning_rate, beta1=options.generator_beta1, beta2=options.generator_beta2)
 
     # we can sum all regularizers in one term, the var-list argument to minimize
     # should make sure each optimizer only regularizes "its own" variables
@@ -246,6 +248,10 @@ def setup_argumentparser():
     parser.add_argument("--l2_penalty", type=float, help="L2 weight decay term", default=0.0)
     parser.add_argument("--gen_l2p_scale", type=float, help="L2 weight decay scaling term for generator", default=1.0)
     parser.add_argument("--discriminator_lr_scale", type=float, help="LR scaling for the discriminator", default=1)
+    parser.add_argument("--generator_beta1", type=float, help="beta1 of generator AdamOptimizer", default=0.9)
+    parser.add_argument("--generator_beta2", type=float, help="beta2 of generator AdamOptimizer", default=0.999)
+    parser.add_argument("--discriminator_beta1", type=float, help="beta1 of discriminator AdamOptimizer", default=0.9)
+    parser.add_argument("--discriminator_beta2", type=float, help="beta2 of discriminator AdamOptimizer", default=0.999)
     parser.add_argument("--dimension", type=int, help='Dimension for the kernel function', default=3)
     parser.add_argument("--epsilon", type=float, help='epsilon', default=1.0)
     parser.add_argument("--threads", type=int, help='number of input threads', default=2)
