@@ -23,7 +23,7 @@ def startup_bookkeeping(logdir, curent_file):
     if not logdir.exists():
         logdir.mkdir(parents=True, exist_ok=True)
 
-    with open(logdir / "pid", 'w') as f:  # write PID so we can abort from outside
+    with open(str(logdir / "pid.txt"), 'w') as f:  # write PID so we can abort from outside
         f.write(str(os.getpid()))
         f.write("\n")
 
@@ -33,9 +33,9 @@ def startup_bookkeeping(logdir, curent_file):
     localdir = Path(curent_file).parent
     pyfiles = localdir.glob("*.py")
     for fn in localdir.glob("*.py"):
-        shutil.copy(fn, dest / fn)
+        shutil.copy(str(fn), str(dest / fn))
 
-    with open(logdir / "argv", 'w') as f:
+    with open(str(logdir / "argv.txt"), 'w') as f:
         f.write(' '.join(sys.argv))
         f.write("\n")
 

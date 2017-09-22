@@ -59,7 +59,7 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
     print_info("\nLogdir: %s\n" % logdir, options.verbosity > 0)
     if __name__ == "__main__" and options.sample_images is None:
         startup_bookkeeping(logdir, __file__)
-        trainlog = open(logdir / 'logfile.csv', 'w')
+        trainlog = open(str(logdir / 'logfile.csv'), 'w')
     else:
         trainlog = None
 
