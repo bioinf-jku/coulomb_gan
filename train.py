@@ -29,6 +29,10 @@ def sample_images(img_tensor, sess, n_batches, path=None):
 
 
 def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimension, epsilon, learning_rate, batch_size, options, logdir_base='/tmp'):
+    if dataset in ['billion_word']:
+        dataset_type = 'text'
+    else:
+        dataset_type = 'image'
     tf.reset_default_graph()
     dtype = tf.float32
 
@@ -65,9 +69,15 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
     out_fn = lambda x : 1.7159 * tf.nn.tanh(x * 2.0 / 3.0)
 
     dataset_pattern, n_samples, img_shape = get_dataset_path(dataset)
+    if dataset_type == 'text':
+        n_samples=options.num_examples
+        y, lines_as_ints, charmap, inv_charmap = load_text_dataset(dataset_pattern, batch_size, options.sequence_length, options.num_examples, options.max_vocab_size, shuffle=True, num_epochs=None)
+        img_shape=[options.sequence_length, len(charmap)]
+        true_ngram_model = ngram_language_model.NgramLanguageModel(lines_as_ints, options.ngrams, len(charmap))
+    else:
+        y = load_image_dataset(dataset_pattern, batch_size, img_shape, n_threads=options.threads)
     z = tf.random_normal([batch_size, latentsize], dtype=dtype, name="z")
     x = create_generator(z, img_shape, options.l2_penalty*options.gen_l2p_scale, generator_type, batch_size, out_fn=out_fn)
-    y = load_dataset(dataset_pattern, batch_size, img_shape, n_threads=options.threads)
     assert x.get_shape().as_list()[1:] == y.get_shape().as_list()[1:], "X and Y have different shapes: %s vs %s" % (x.get_shape().as_list(), y.get_shape().as_list())
 
     disc_x = create_discriminator(x, discriminator_type, options.l2_penalty, False)
@@ -239,7 +249,11 @@ def setup_argumentparser():
     parser.add_argument("--dimension", type=int, help='Dimension for the kernel function', default=3)
     parser.add_argument("--epsilon", type=float, help='epsilon', default=1.0)
     parser.add_argument("--threads", type=int, help='number of input threads', default=2)
-    parser.add_argument("--dataset", choices=['celebA', 'lsun', 'cifar10'], default='celebA')
+    parser.add_argument("--dataset", choices=['celebA', 'lsun', 'cifar10', 'billion_word'], default='celebA')
+    parser.add_argument("--num_examples", type=int, help='number of examples to load in billion word setting', default=10000000)
+    parser.add_argument("--sequence_length", type=int, help='length of scentences to load in billion word setting', default=32)
+    parser.add_argument("--max_vocab_size", type=int, help='maximum number of allowable characters, everything else gets unk', default=2048)
+    parser.add_argument("--ngrams", type=int, help='length of ngrams to check for in billion word setting', default=6)
     parser.add_argument("--resume_checkpoint", type=str, help='path to model from which to resume', default='')
     parser.add_argument("--checkpoint_every", type=int, help='how often to create a new checkpoint', default=25000)
     parser.add_argument("--logdir", type=str, help='directory for TF logs and summaries', default=default_logdir)
@@ -255,6 +269,11 @@ def setup_argumentparser():
     parser.add_argument("--verbosity", help="verbosity level", type=int, default=1)
     return parser
 
+def check_args(options):
+    if options.dataset == 'billion_word' and options.ngrams < 4:
+        raise ValueError('in billion word setting please compute at least up to 4grams')
+    return True
+        
 
 if __name__ == "__main__":
     # by parsing the arguments already, we can bail out now instead of waiting
@@ -267,7 +286,9 @@ if __name__ == "__main__":
     import tensorflow as tf
     from utils import *
     from models import *
-
+    if args.dataset=='billion_word':
+        import ngram_language_model
+    check_args(args)
     run(args.dataset.lower(), args.generator, args.discriminator, args.latentsize,
         args.dimension, args.epsilon, args.learningrate, args.batch_size, args, args.logdir)
 else:
