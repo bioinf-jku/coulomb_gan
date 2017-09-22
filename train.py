@@ -224,56 +224,63 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
         n_epochs = max_iter / (n_samples / batch_size)
         print_info("total iterations: %d (= %3.2f epochs)" % (max_iter, n_epochs), options.verbosity > 0)
         t0 = time.time()
-        for cur_iter in range(max_iter+1): # +1 so we are more likely to get a model/stats line at the end
+        
+        
+        # put it all in a try / catch block so the model will be saved on KeyboardInterrupt
+        try:
+            for cur_iter in range(max_iter+1): # +1 so we are more likely to get a model/stats line at the end
 
-            sess.run(train_op)
+                sess.run(train_op)
                 
-            if (cur_iter > 0) and (cur_iter % options.checkpoint_every == 0):
-                saver.save(sess, str(logdir / 'model'), global_step=cur_iter)
+                if (cur_iter > 0) and (cur_iter % options.checkpoint_every == 0):
+                    saver.save(sess, str(logdir / 'model'), global_step=cur_iter)
                     
-            print_stats = cur_iter % options.print_stats_interval == 0 #or (cur_iter < 1000 and cur_iter % 100 == 0) or (cur_iter == max_iter - 1)
-            if print_stats and dataset_type == 'image':
-                smry, xx_img = sess.run([merged_smry, x_img])
-                log.add_summary(smry, cur_iter)
-
-                images = sample_images(x_img, sess, n_batches=5*1024 // batch_size)*255
-                mu_gen, sigma_gen = fid.calculate_activation_statistics(images, sess, batch_size=128)
-                fid_value = fid.calculate_frechet_distance(mu_gen, sigma_gen, mu_fid, sigma_fid)
-
-                s = (cur_iter, fid_value, time.time() - t0, dataset, run_name)
-                fig = plot_tiles(xx_img, 10, 10, local_norm="none", figsize=(6.6, 6.6))
-                fig.savefig(str(logdir / ('%09d.png' % cur_iter)))
-                plt.close(fig)
-                if trainlog:
-                    print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
-                print_info("%9d  %3.2f -- %3.2fs %s %s" % s, options.verbosity > 0)
                 
-            if print_stats and dataset_type == 'text':
-                if merged_smry != None:
-                    smry = sess.run(merged_smry)
+                print_stats = cur_iter % options.print_stats_interval == 0 #or (cur_iter < 1000 and cur_iter % 100 == 0) or (cur_iter == max_iter - 1)
+                if print_stats and dataset_type == 'image':
+                    smry, xx_img = sess.run([merged_smry, x_img])
                     log.add_summary(smry, cur_iter)
+
+                    images = sample_images(x_img, sess, n_batches=5*1024 // batch_size)*255
+                    mu_gen, sigma_gen = fid.calculate_activation_statistics(images, sess, batch_size=128)
+                    fid_value = fid.calculate_frechet_distance(mu_gen, sigma_gen, mu_fid, sigma_fid)
+
+                    s = (cur_iter, fid_value, time.time() - t0, dataset, run_name)
+                    fig = plot_tiles(xx_img, 10, 10, local_norm="none", figsize=(6.6, 6.6))
+                    fig.savefig(str(logdir / ('%09d.png' % cur_iter)))
+                    plt.close(fig)
+                    if trainlog:
+                        print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
+                    print_info("%9d  %3.2f -- %3.2fs %s %s" % s, options.verbosity > 0)
+                
+                if print_stats and dataset_type == 'text':
+                    if merged_smry != None:
+                        smry = sess.run(merged_smry)
+                        log.add_summary(smry, cur_iter)
                     
-                sample_text_ = sample_text(sample_text_tensor, sess, 10, inv_charmap, logdir / 'samples', cur_iter)
-                gen_ngram_model = ngram_language_model.NgramLanguageModel(sample_text_, options.ngrams, len(charmap))
-                js = []
-                for i in range(options.ngrams):
-                    js.append(true_ngram_model.js_with(gen_ngram_model, i+1))
-                    print('js%d' % (i+1), js[i])
-                s = [cur_iter] + js + [time.time() - t0, dataset, run_name]
-                if trainlog:
-                    print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
-                if options.ngrams >= 6:
-                    s = (cur_iter, js[3], js[5], time.time() - t0, dataset, run_name)
-                    print_info("%9d  %3.4f -- %3.4f -- %3.2fs %s %s" % s, options.verbosity > 0)
-                elif options.ngrams >= 4:
-                    s = (cur_iter, js[3], time.time() - t0, dataset, run_name)
-                    print_info("%9d  %3.4f -- %3.2fs %s %s" % s, options.verbosity > 0)
-                    
-                    
-        if trainlog:
-            trainlog.close()
-        coord.request_stop()
-        coord.join(threads)
+                    sample_text_ = sample_text(sample_text_tensor, sess, 10, inv_charmap, logdir / 'samples', cur_iter)
+                    gen_ngram_model = ngram_language_model.NgramLanguageModel(sample_text_, options.ngrams, len(charmap))
+                    js = []
+                    for i in range(options.ngrams):
+                        js.append(true_ngram_model.js_with(gen_ngram_model, i+1))
+                        print('js%d' % (i+1), js[i])
+                    s = [cur_iter] + js + [time.time() - t0, dataset, run_name]
+                    if trainlog:
+                        print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
+                    if options.ngrams >= 6:
+                        s = (cur_iter, js[3], js[5], time.time() - t0, dataset, run_name)
+                        print_info("%9d  %3.4f -- %3.4f -- %3.2fs %s %s" % s, options.verbosity > 0)
+                    elif options.ngrams >= 4:
+                        s = (cur_iter, js[3], time.time() - t0, dataset, run_name)
+                        print_info("%9d  %3.4f -- %3.2fs %s %s" % s, options.verbosity > 0)
+            
+        except KeyboardInterrupt:
+            saver.save(sess, str(logdir / 'model'), global_step=cur_iter)
+        finally:
+            if trainlog:
+                trainlog.close()
+            coord.request_stop()
+            coord.join(threads)
         return
 
 
