@@ -27,8 +27,26 @@ def sample_images(img_tensor, sess, n_batches, path=None):
             imsave(path / ("%05d.png" % i), img)
     return images
 
-
+def sample_text(text_tensor, sess, n_batches, inv_charmap, path, cur_iter):
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+    outputs = [sess.run(text_tensor) for i in range(n_batches)]
+    outputs = np.argmax(np.vstack(outputs), axis=2)
+    with open(str(path / ('sample_%09d.txt' % cur_iter)), 'w', encoding='utf-8') as f:
+        for s in outputs:
+            decoded = []
+            for c in s:
+                decoded.append(inv_charmap[c])
+            f.write("".join(decoded) + "\n")
+    
+    return outputs
+    
+    
 def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimension, epsilon, learning_rate, batch_size, options, logdir_base='/tmp'):
+    if dataset in ['billion_word']:
+        dataset_type = 'text'
+    else:
+        dataset_type = 'image'
     tf.reset_default_graph()
     dtype = tf.float32
 
@@ -55,7 +73,7 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
     print_info("\nLogdir: %s\n" % logdir, options.verbosity > 0)
     if __name__ == "__main__" and options.sample_images is None:
         startup_bookkeeping(logdir, __file__)
-        trainlog = open(logdir / 'logfile.csv', 'w')
+        trainlog = open(str(logdir / 'logfile.csv'), 'w')
     else:
         trainlog = None
 
@@ -65,9 +83,16 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
     out_fn = lambda x : 1.7159 * tf.nn.tanh(x * 2.0 / 3.0)
 
     dataset_pattern, n_samples, img_shape = get_dataset_path(dataset)
+    if dataset_type == 'text':
+        n_samples=options.num_examples
+        y, lines_as_ints, charmap, inv_charmap = load_text_dataset(dataset_pattern, batch_size, options.sequence_length, options.num_examples, options.max_vocab_size, shuffle=True, num_epochs=None)
+        img_shape=[options.sequence_length, len(charmap)]
+        true_ngram_model = ngram_language_model.NgramLanguageModel(lines_as_ints, options.ngrams, len(charmap))
+    else:
+        y = load_image_dataset(dataset_pattern, batch_size, img_shape, n_threads=options.threads)
     z = tf.random_normal([batch_size, latentsize], dtype=dtype, name="z")
     x = create_generator(z, img_shape, options.l2_penalty*options.gen_l2p_scale, generator_type, batch_size, out_fn=out_fn)
-    y = load_dataset(dataset_pattern, batch_size, img_shape, n_threads=options.threads)
+    sample_text_tensor = create_generator(z, img_shape, options.l2_penalty*options.gen_l2p_scale, generator_type, batch_size, out_fn=out_fn, train=False)
     assert x.get_shape().as_list()[1:] == y.get_shape().as_list()[1:], "X and Y have different shapes: %s vs %s" % (x.get_shape().as_list(), y.get_shape().as_list())
 
     disc_x = create_discriminator(x, discriminator_type, options.l2_penalty, False)
@@ -100,8 +125,10 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
 
     vars_d = [v for v in tf.global_variables() if v.name.startswith('discriminator')]
     vars_g = [v for v in tf.global_variables() if v.name.startswith('generator')]
-    optim_d = tf.train.AdamOptimizer(learning_rate*options.discriminator_lr_scale)
-    optim_g = tf.train.AdamOptimizer(learning_rate)
+    optim_d = tf.train.AdamOptimizer(learning_rate*options.discriminator_lr_scale,
+                                     beta1=options.discriminator_beta1,
+                                     beta2=options.discriminator_beta2)
+    optim_g = tf.train.AdamOptimizer(learning_rate, beta1=options.generator_beta1, beta2=options.generator_beta2)
 
     # we can sum all regularizers in one term, the var-list argument to minimize
     # should make sure each optimizer only regularizes "its own" variables
@@ -116,13 +143,15 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
         train_op = tf.group(train_op, assign_x_op)
 
     # Tensorboard summaries
-    x_img = (tf.clip_by_value(x, -1.0, 1.0) + 1) / 2.0
-    y_img = tf.clip_by_value((y + 1) / 2, 0.0, 1.0)
+    if dataset_type == 'image':
+      x_img = (tf.clip_by_value(x, -1.0, 1.0) + 1) / 2.0
+      y_img = tf.clip_by_value((y + 1) / 2, 0.0, 1.0)
     if options.create_summaries:
-        with tf.name_scope("distances"):
-            tf.summary.histogram("xx", generate_all_distances(x, x))
-            tf.summary.histogram("xy", generate_all_distances(x, y))
-            tf.summary.histogram("yy", generate_all_distances(y, y))
+        if dataset_type == 'image':
+            with tf.name_scope("distances"):
+                tf.summary.histogram("xx", generate_all_distances(x, x))
+                tf.summary.histogram("xy", generate_all_distances(x, y))
+                tf.summary.histogram("yy", generate_all_distances(y, y))
         with tf.name_scope('discriminator_stats'):
             tf.summary.histogram('output_x', disc_x)
             tf.summary.histogram('output_y', disc_y)
@@ -133,8 +162,9 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
             tf.summary.histogram('y', pot_y)
             if options.remember_previous:
                 tf.summary.histogram('x_old', pot_x_old)
-        img_smry = tf.summary.image("out_img", x_img, 2)
-        img_smry = tf.summary.image("in_img", y_img, 2)
+        if dataset_type == 'image':
+            img_smry = tf.summary.image("out_img", x_img, 2)
+            img_smry = tf.summary.image("in_img", y_img, 2)
         with tf.name_scope("losses"):
             tf.summary.scalar('loss_d_x', loss_d_x)
             tf.summary.scalar('loss_d_y', loss_d_y)
@@ -152,14 +182,15 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
                     continue
                 tf.summary.scalar("act_"+op.name, tf.reduce_mean(op.outputs[0]))
     merged_smry = tf.summary.merge_all()
-
-    fid_stats_file = options.fid_stats % dataset.lower()
-    assert Path(fid_stats_file).exists(), "Can't find training set statistics for FID"
-    f = np.load(fid_stats_file)
-    mu_fid, sigma_fid = f['mu'][:], f['sigma'][:]
-    f.close()
-    inception_path = fid.check_or_download_inception(options.inception_path)
-    fid.create_inception_graph(inception_path)
+    
+    if dataset_type == 'image':
+        fid_stats_file = options.fid_stats % dataset.lower()
+        assert Path(fid_stats_file).exists(), "Can't find training set statistics for FID"
+        f = np.load(fid_stats_file)
+        mu_fid, sigma_fid = f['mu'][:], f['sigma'][:]
+        f.close()
+        inception_path = fid.check_or_download_inception(options.inception_path)
+        fid.create_inception_graph(inception_path)
 
     maxv = 0.05
     cmap = plt.cm.ScalarMappable(mpl.colors.Normalize(-maxv, maxv), cmap=plt.cm.RdBu)
@@ -193,32 +224,63 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
         n_epochs = max_iter / (n_samples / batch_size)
         print_info("total iterations: %d (= %3.2f epochs)" % (max_iter, n_epochs), options.verbosity > 0)
         t0 = time.time()
-        for cur_iter in range(max_iter+1): # +1 so we are more likely to get a model/stats line at the end
+        
+        
+        # put it all in a try / catch block so the model will be saved on KeyboardInterrupt
+        try:
+            for cur_iter in range(max_iter+1): # +1 so we are more likely to get a model/stats line at the end
 
-            sess.run(train_op)
-            print_stats = cur_iter % 5000 == 0 #or (cur_iter < 1000 and cur_iter % 100 == 0) or (cur_iter == max_iter - 1)
-            if print_stats:
-                smry, xx_img = sess.run([merged_smry, x_img])
-                log.add_summary(smry, cur_iter)
-
-                images = sample_images(x_img, sess, n_batches=5*1024 // batch_size)*255
-                mu_gen, sigma_gen = fid.calculate_activation_statistics(images, sess, batch_size=128)
-                fid_value = fid.calculate_frechet_distance(mu_gen, sigma_gen, mu_fid, sigma_fid)
-
-                s = (cur_iter, fid_value, time.time() - t0, dataset, run_name)
-                fig = plot_tiles(xx_img, 10, 10, local_norm="none", figsize=(6.6, 6.6))
-                fig.savefig(str(logdir / ('%09d.png' % cur_iter)))
-                plt.close(fig)
+                sess.run(train_op)
+                
                 if (cur_iter > 0) and (cur_iter % options.checkpoint_every == 0):
                     saver.save(sess, str(logdir / 'model'), global_step=cur_iter)
-                if trainlog:
-                    print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
-                print_info("%9d  %3.2f -- %3.2fs %s %s" % s, options.verbosity > 0)
+                    
+                
+                print_stats = cur_iter % options.print_stats_interval == 0 #or (cur_iter < 1000 and cur_iter % 100 == 0) or (cur_iter == max_iter - 1)
+                if print_stats and dataset_type == 'image':
+                    smry, xx_img = sess.run([merged_smry, x_img])
+                    log.add_summary(smry, cur_iter)
 
-        if trainlog:
-            trainlog.close()
-        coord.request_stop()
-        coord.join(threads)
+                    images = sample_images(x_img, sess, n_batches=5*1024 // batch_size)*255
+                    mu_gen, sigma_gen = fid.calculate_activation_statistics(images, sess, batch_size=128)
+                    fid_value = fid.calculate_frechet_distance(mu_gen, sigma_gen, mu_fid, sigma_fid)
+
+                    s = (cur_iter, fid_value, time.time() - t0, dataset, run_name)
+                    fig = plot_tiles(xx_img, 10, 10, local_norm="none", figsize=(6.6, 6.6))
+                    fig.savefig(str(logdir / ('%09d.png' % cur_iter)))
+                    plt.close(fig)
+                    if trainlog:
+                        print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
+                    print_info("%9d  %3.2f -- %3.2fs %s %s" % s, options.verbosity > 0)
+                
+                if print_stats and dataset_type == 'text':
+                    if merged_smry != None:
+                        smry = sess.run(merged_smry)
+                        log.add_summary(smry, cur_iter)
+                    
+                    sample_text_ = sample_text(sample_text_tensor, sess, 10, inv_charmap, logdir / 'samples', cur_iter)
+                    gen_ngram_model = ngram_language_model.NgramLanguageModel(sample_text_, options.ngrams, len(charmap))
+                    js = []
+                    for i in range(options.ngrams):
+                        js.append(true_ngram_model.js_with(gen_ngram_model, i+1))
+                        print('js%d' % (i+1), js[i])
+                    s = [cur_iter] + js + [time.time() - t0, dataset, run_name]
+                    if trainlog:
+                        print(', '.join([str(ss) for ss in s]), file=trainlog, flush=True)
+                    if options.ngrams >= 6:
+                        s = (cur_iter, js[3], js[5], time.time() - t0, dataset, run_name)
+                        print_info("%9d  %3.4f -- %3.4f -- %3.2fs %s %s" % s, options.verbosity > 0)
+                    elif options.ngrams >= 4:
+                        s = (cur_iter, js[3], time.time() - t0, dataset, run_name)
+                        print_info("%9d  %3.4f -- %3.2fs %s %s" % s, options.verbosity > 0)
+            
+        except KeyboardInterrupt:
+            saver.save(sess, str(logdir / 'model'), global_step=cur_iter)
+        finally:
+            if trainlog:
+                trainlog.close()
+            coord.request_stop()
+            coord.join(threads)
         return
 
 
@@ -231,15 +293,23 @@ def setup_argumentparser():
     parser.add_argument("-z", "--latentsize", type=int, help='latent size', default=32)
     parser.add_argument("-l", "--learningrate", type=float, help='learning rate', default=1e-4)
     parser.add_argument("--gpu", type=str, help='GPU to use (leave blank for CPU only)', default="")
-    parser.add_argument("-g", "--generator", default='dcgan', choices=['dcgan','began'])
-    parser.add_argument("-d", "--discriminator", default='dcgan', choices=['began', 'dcgan', 'dcgan-big', 'dcgan-big2'])
+    parser.add_argument("-g", "--generator", default='dcgan', choices=['dcgan','began','billion_word'])
+    parser.add_argument("-d", "--discriminator", default='dcgan', choices=['began', 'dcgan', 'dcgan-big', 'dcgan-big2','billion_word'])
     parser.add_argument("--l2_penalty", type=float, help="L2 weight decay term", default=0.0)
     parser.add_argument("--gen_l2p_scale", type=float, help="L2 weight decay scaling term for generator", default=1.0)
     parser.add_argument("--discriminator_lr_scale", type=float, help="LR scaling for the discriminator", default=1)
+    parser.add_argument("--generator_beta1", type=float, help="beta1 of generator AdamOptimizer", default=0.9)
+    parser.add_argument("--generator_beta2", type=float, help="beta2 of generator AdamOptimizer", default=0.999)
+    parser.add_argument("--discriminator_beta1", type=float, help="beta1 of discriminator AdamOptimizer", default=0.9)
+    parser.add_argument("--discriminator_beta2", type=float, help="beta2 of discriminator AdamOptimizer", default=0.999)
     parser.add_argument("--dimension", type=int, help='Dimension for the kernel function', default=3)
     parser.add_argument("--epsilon", type=float, help='epsilon', default=1.0)
     parser.add_argument("--threads", type=int, help='number of input threads', default=2)
-    parser.add_argument("--dataset", choices=['celebA', 'lsun', 'cifar10'], default='celebA')
+    parser.add_argument("--dataset", choices=['celebA', 'lsun', 'cifar10', 'billion_word'], default='celebA')
+    parser.add_argument("--num_examples", type=int, help='number of examples to load in billion word setting', default=10000000)
+    parser.add_argument("--sequence_length", type=int, help='length of scentences to load in billion word setting', default=32)
+    parser.add_argument("--max_vocab_size", type=int, help='maximum number of allowable characters, everything else gets unk', default=2048)
+    parser.add_argument("--ngrams", type=int, help='length of ngrams to check for in billion word setting', default=6)
     parser.add_argument("--resume_checkpoint", type=str, help='path to model from which to resume', default='')
     parser.add_argument("--checkpoint_every", type=int, help='how often to create a new checkpoint', default=25000)
     parser.add_argument("--logdir", type=str, help='directory for TF logs and summaries', default=default_logdir)
@@ -253,8 +323,14 @@ def setup_argumentparser():
     parser.add_argument("--inception_path", type=str, help='Path to Inception model', default='/publicwork/coulomb_gan')
     parser.add_argument("--fid_stats", type=str, help='Path to statistics for FID (%s will be replaced by the passed dataset)', default='./fid_stats_%s.npz')
     parser.add_argument("--verbosity", help="verbosity level", type=int, default=1)
+    parser.add_argument("--print_stats_interval", help="how often stats should be printed", type=int, default=5000)
     return parser
 
+def check_args(options):
+    if options.dataset == 'billion_word' and options.ngrams < 4:
+        raise ValueError('in billion word setting please compute at least up to 4grams')
+    return True
+        
 
 if __name__ == "__main__":
     # by parsing the arguments already, we can bail out now instead of waiting
@@ -267,7 +343,9 @@ if __name__ == "__main__":
     import tensorflow as tf
     from utils import *
     from models import *
-
+    if args.dataset=='billion_word':
+        import ngram_language_model
+    check_args(args)
     run(args.dataset.lower(), args.generator, args.discriminator, args.latentsize,
         args.dimension, args.epsilon, args.learningrate, args.batch_size, args, args.logdir)
 else:

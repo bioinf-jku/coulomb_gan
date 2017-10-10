@@ -23,7 +23,7 @@ def startup_bookkeeping(logdir, curent_file):
     if not logdir.exists():
         logdir.mkdir(parents=True, exist_ok=True)
 
-    with open(logdir / "pid", 'w') as f:  # write PID so we can abort from outside
+    with open(str(logdir / "pid.txt"), 'w') as f:  # write PID so we can abort from outside
         f.write(str(os.getpid()))
         f.write("\n")
 
@@ -33,9 +33,9 @@ def startup_bookkeeping(logdir, curent_file):
     localdir = Path(curent_file).parent
     pyfiles = localdir.glob("*.py")
     for fn in localdir.glob("*.py"):
-        shutil.copy(fn, dest / fn)
+        shutil.copy(str(fn), str(dest / fn))
 
-    with open(logdir / "argv", 'w') as f:
+    with open(str(logdir / "argv.txt"), 'w') as f:
         f.write(' '.join(sys.argv))
         f.write("\n")
 
@@ -155,13 +155,84 @@ def get_dataset_path(dataset_name):
             dataset_directory = '/publicdata/image/cifar10_img/'
         dataset_pattern = os.path.join(dataset_directory, '*/*.png')
         img_shape = [32, 32, 3]
+    elif dataset == 'billion_word':
+        n_samples = None
+        dataset_directory = '/mnt/cseward/google_billion_word/1-billion-word-language-modeling-benchmark-r13output/'
+        if not os.path.exists(dataset_directory):
+            dataset_directory = '/local10/bioinf/billion_word/' # raptor
+        if not os.path.exists(dataset_directory):
+            print("Reading input files over network")
+            dataset_directory = '/publicdata/billion_word/'
+        dataset_pattern = dataset_directory
+        img_shape = None
     else:
         raise RuntimeError("Unknown dataset")
 
     return dataset_pattern, n_samples, img_shape
 
+def load_text_dataset(path, batch_size, max_length, max_n_examples, max_vocab_size, dtype=tf.float32, shuffle=True, num_epochs=None):
+    print("loading dataset...")
 
-def load_dataset(path, batch_size, img_shape, n_threads, allow_smaller_final_batch=False, dtype=tf.float32, num_epochs=None):
+    lines = []
+
+    finished = False
+
+    for i in range(99):
+        path_ = path + "training-monolingual.tokenized.shuffled/news.en-{}-of-00100".format(str(i+1).zfill(5))
+        with open(str(path_), 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line[:-1]
+                line = tuple(line)
+
+                if len(line) > max_length:
+                    line = line[:max_length]
+
+                lines.append(line + ( ("`",)*(max_length-len(line)) ) )
+
+                if len(lines) == max_n_examples:
+                    finished = True
+                    break
+        if finished:
+            break
+    # don't shuffle here, we'll shuffle in the input queue producer
+    #np.random.shuffle(lines)
+
+    import collections
+    counts = collections.Counter(char for line in lines for char in line)
+
+    charmap = {}
+    inv_charmap = []
+    
+    for char,count in counts.most_common(max_vocab_size-1):
+        if char not in charmap:
+            charmap[char] = len(inv_charmap)
+            inv_charmap.append(char)
+
+    #now sort the charmap
+    inv_charmap = sorted(inv_charmap)
+    for i, char in enumerate(inv_charmap):
+      charmap[char] = i+1
+    
+    # add the unk
+    inv_charmap = ['unk'] + inv_charmap
+    charmap['unk'] = 0
+
+    lines_as_ints = np.zeros((max_n_examples, max_length), dtype=np.int32)
+    for i,line in enumerate(lines):
+        for j,char in enumerate(line):
+            if char in charmap:
+                lines_as_ints[i,j] = charmap[char]
+            else:
+                lines_as_ints[i,j] = charmap['unk']
+    
+    min_after_dequeue = batch_size * 1000
+    capacity = min_after_dequeue + (4 * batch_size)
+    input_producer = tf.train.input_producer(lines_as_ints, shuffle=shuffle, capacity=capacity, num_epochs=num_epochs)
+    y_batch = tf.one_hot(input_producer.dequeue_many(batch_size), len(charmap))
+    print("loaded %s lines in dataset" % (len(lines)))
+    return y_batch, lines_as_ints, charmap, inv_charmap
+
+def load_image_dataset(path, batch_size, img_shape, n_threads, allow_smaller_final_batch=False, dtype=tf.float32, num_epochs=None):
     with tf.variable_scope('input'):
         filelist = tf.train.match_filenames_once(path)
         filequeue = tf.train.string_input_producer(filelist, num_epochs=num_epochs, name="filename_queue")
