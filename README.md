@@ -6,7 +6,7 @@ This repository contains an implementation of Coulomb GANs as described in [Coul
 As a first step, adjust the path to the datasets in `get_dataset_path` in the file `utils.py`.
 Then, run using e.g.
 
-    ./train.py --gpu 0 -z 16 --dataset lsun -d dcgan-big -i 1000 --l2_penalty 1e-7 --discriminator_lr_scale 0.5
+    ./train.py --gpu 0 -z 16 --dataset lsun -g my -d my-big -i 1000 --l2_penalty 1e-7 --discriminator_lr_scale 0.5
 
 Note that during training, the [FID](https://arxiv.org/abs/1706.08500) metric is calculated to estimate quality. But to save time, we use only 5k generated samples, which underestimates the FID. Thus to evaluate final model quality, use the `evaluate_fid.py` script.
 

@@ -180,10 +180,13 @@ def _handle_path(path, sess):
         m, s = f['mu'][:], f['sigma'][:]
         f.close()
     else:
+        import time
+        t0 = time.time()
         path = pathlib.Path(path)
         files = list(path.glob('*.jpg')) + list(path.glob('*.png'))
         x = np.array([imread(str(fn)).astype(np.float32) for fn in files])
-        m, s = calculate_activation_statistics(x, sess)
+        m, s = calculate_activation_statistics(x, sess, batch_size=128)
+        print(time.time() - t0)
     return m, s
 
 

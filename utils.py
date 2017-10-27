@@ -35,7 +35,7 @@ def startup_bookkeeping(logdir, curent_file):
     for fn in localdir.glob("*.py"):
         shutil.copy(str(fn), str(dest / fn))
 
-    with open(str(logdir / "argv.txt"), 'w') as f:
+    with open(str(logdir / "argv"), 'w') as f:
         f.write(' '.join(sys.argv))
         f.write("\n")
 
@@ -143,26 +143,26 @@ def get_dataset_path(dataset_name):
         n_samples = 3033042
         dataset_directory = '/local00/bioinf/lsun_cropped/'
         if not os.path.exists(dataset_directory):
+            dataset_directory = '/local10/k40data/tom/lsun_cropped/' # k40
+        if not os.path.exists(dataset_directory):
             print("Reading input files over network")
             dataset_directory = '/publicdata/image/lsun/lsun_cropped/'
         dataset_pattern = os.path.join(dataset_directory, '*', '*.jpg')
         img_shape = [64, 64, 3]
     elif dataset == 'cifar10':
         n_samples = 60000
-        dataset_directory = '/local00/bioinf/cifar10_img/'
+        dataset_directory = '/local00/bioinf/cifar10_img/original/train/'
         if not os.path.exists(dataset_directory):
             print("Reading input files over network")
-            dataset_directory = '/publicdata/image/cifar10_img/'
-        dataset_pattern = os.path.join(dataset_directory, '*/*.png')
+            dataset_directory = '/publicdata/image/cifar10_img/original/train/'
+        dataset_pattern = os.path.join(dataset_directory, '*.png')
         img_shape = [32, 32, 3]
     elif dataset == 'billion_word':
         n_samples = None
-        dataset_directory = '/mnt/cseward/google_billion_word/1-billion-word-language-modeling-benchmark-r13output/'
-        if not os.path.exists(dataset_directory):
-            dataset_directory = '/local10/bioinf/billion_word/' # raptor
+        dataset_directory = '/local00/bioinf/google_billion_word/'
         if not os.path.exists(dataset_directory):
             print("Reading input files over network")
-            dataset_directory = '/publicdata/billion_word/'
+            dataset_directory = '/publicdata/nlp/google_billion_word/1-billion-word-language-modeling-benchmark-r13output/'
         dataset_pattern = dataset_directory
         img_shape = None
     else:
@@ -202,7 +202,7 @@ def load_text_dataset(path, batch_size, max_length, max_n_examples, max_vocab_si
 
     charmap = {}
     inv_charmap = []
-    
+
     for char,count in counts.most_common(max_vocab_size-1):
         if char not in charmap:
             charmap[char] = len(inv_charmap)
@@ -212,7 +212,7 @@ def load_text_dataset(path, batch_size, max_length, max_n_examples, max_vocab_si
     inv_charmap = sorted(inv_charmap)
     for i, char in enumerate(inv_charmap):
       charmap[char] = i+1
-    
+
     # add the unk
     inv_charmap = ['unk'] + inv_charmap
     charmap['unk'] = 0
@@ -224,7 +224,7 @@ def load_text_dataset(path, batch_size, max_length, max_n_examples, max_vocab_si
                 lines_as_ints[i,j] = charmap[char]
             else:
                 lines_as_ints[i,j] = charmap['unk']
-    
+
     min_after_dequeue = batch_size * 1000
     capacity = min_after_dequeue + (4 * batch_size)
     input_producer = tf.train.input_producer(lines_as_ints, shuffle=shuffle, capacity=capacity, num_epochs=num_epochs)
@@ -298,8 +298,8 @@ def get_potentials(x, y, dimension, cur_epsilon):
     pk_xx = plummer_kernel(x_fixed, x, dimension, cur_epsilon)
     pk_yx = plummer_kernel(y, x, dimension, cur_epsilon)
     pk_yy = plummer_kernel(y_fixed, y, dimension, cur_epsilon)
-    pk_xx = tf.matrix_set_diag(pk_xx, tf.ones(shape=x.get_shape()[0], dtype=pk_xx.dtype))
-    pk_yy = tf.matrix_set_diag(pk_yy, tf.ones(shape=y.get_shape()[0], dtype=pk_yy.dtype))
+    #pk_xx = tf.matrix_set_diag(pk_xx, tf.ones(shape=x.get_shape()[0], dtype=pk_xx.dtype))
+    #pk_yy = tf.matrix_set_diag(pk_yy, tf.ones(shape=y.get_shape()[0], dtype=pk_yy.dtype))
     kxx = tf.reduce_sum(pk_xx, axis=0) / (nx)
     kyx = tf.reduce_sum(pk_yx, axis=0) / ny
     kxy = tf.reduce_sum(pk_yx, axis=1) / (nx)

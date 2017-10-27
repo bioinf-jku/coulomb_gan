@@ -61,7 +61,7 @@ if __name__ == "__main__":
     #parser.add_argument("image_dir", type=str, help='Path to the generated images', default='./img')
     parser.add_argument("-s", "--stats", type=str, help='Inception statistics of real data', required=True)
     parser.add_argument("-i", "--inception", type=str, help='Path to Inception model (will be downloaded if not provided)', default=None)
-    parser.add_argument("-n", "--nsamples", type=int, help='Number of samples', default=20480)
+    parser.add_argument("-n", "--nsamples", type=int, help='Number of samples', default=50048)
     parser.add_argument("--gpu", type=str, help='GPU to use (leave blank for CPU only)', default="")
     args = parser.parse_args()
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
