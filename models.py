@@ -15,6 +15,13 @@ def get_initializer(act_fn):
     else:  # xavier
         return layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG')
 
+def nn_upscale(l, scaling):
+    ls = l.get_shape().as_list()
+    h, w = ls[1], ls[2]
+    nh = int(h*scaling)
+    nw = int(w*scaling)
+    return tf.image.resize_nearest_neighbor(l, (nh, nw))
+
 
 def softmax(logits, charmap_len):
     return tf.reshape(tf.nn.softmax(tf.reshape(logits, [-1, charmap_len])),tf.shape(logits))
@@ -76,17 +83,10 @@ def my_generator(z, img_shape, l2_penalty, act_fn=tf.nn.relu, out_fn=tf.nn.tanh,
 
 
 def began_generator(z, img_shape, l2_penalty, act_fn=tf.nn.elu, out_fn=None):
-    def scale(l, scaling):
-        ls = l.get_shape().as_list()
-        h, w = ls[1], ls[2]
-        nh = int(h*scaling)
-        nw = int(w*scaling)
-        return tf.image.resize_nearest_neighbor(l, (nh, nw))
-
     reg = tf.contrib.layers.l2_regularizer(l2_penalty) if l2_penalty > 0.0 else None
 
     layers = []
-    n_repeat = int(np.log2(img_shape[0] / 8)) + 1
+    n_repeat = int(np.log2(img_shape[0] / 4))
     n_hidden = 128
     l = tf.layers.dense(z, 8*8*n_hidden, activation=None, kernel_regularizer=reg)
     layers.append(l)
@@ -106,7 +106,7 @@ def began_generator(z, img_shape, l2_penalty, act_fn=tf.nn.elu, out_fn=None):
     return layers
 
 
-def ResBlock(name, inputs, n_hidden=512, activation=tf.nn.relu, l2_penalty=None, use_batchnorm=True, train=True):
+def ResBlock1d(name, inputs, n_hidden=512, activation=tf.nn.relu, l2_penalty=None, use_batchnorm=True, train=True):
     reg = tf.contrib.layers.l2_regularizer(l2_penalty) if l2_penalty > 0.0 else None
     output = inputs
     output = activation(output)
@@ -128,17 +128,55 @@ def billion_word_generator(z, img_shape, l2_penalty, act_fn=tf.nn.relu, train=Tr
     output = tf.layers.dense(output, SEQ_LEN*n_hidden, name='Generator.Input')
     output = tf.layers.batch_normalization(output, scale=False, training=train, name='Generator.Input.bn')
     output = tf.reshape(output, [-1, n_hidden, SEQ_LEN])
-    output = ResBlock('Generator.1', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
-    output = ResBlock('Generator.2', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
-    output = ResBlock('Generator.3', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
-    output = ResBlock('Generator.4', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
-    output = ResBlock('Generator.5', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
+    output = ResBlock1d('Generator.1', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
+    output = ResBlock1d('Generator.2', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
+    output = ResBlock1d('Generator.3', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
+    output = ResBlock1d('Generator.4', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
+    output = ResBlock1d('Generator.5', output, n_hidden, activation=act_fn, l2_penalty=l2_penalty, train=train, use_batchnorm=True)
     output = tf.layers.conv1d(output, img_shape[1], 1, name='Generator.Output', padding='same', data_format='channels_first')
 
     output = tf.transpose(output, [0, 2, 1])
     layers = [softmax(output, img_shape[1])]
     return layers
 
+
+def ResidualBlock2d(x, name, n_out, l2_penalty, resample, train=True):
+    assert resample in ('up', 'down')
+    reg = tf.contrib.layers.l2_regularizer(l2_penalty) if l2_penalty > 0.0 else None
+    n = x.get_shape().as_list()[1]
+    inputs = x
+    x = tf.layers.batch_normalization(x, training=train, scale=False, epsilon=1e-5, momentum=0.9, name=name+".bn.1")
+    x = tf.nn.relu(x)
+    if resample=='up':
+        x = nn_upscale(x, 2)
+    else:
+        x = tf.layers.average_pooling2d(x, 2, 2)
+    x = tf.layers.conv2d(x, n, 3, name=name+'.c1', kernel_regularizer=reg, padding='same')
+    x = tf.layers.batch_normalization(x, training=train, scale=False, epsilon=1e-5, momentum=0.9, name=name+".bn.2")
+    x = tf.nn.relu(x)
+    x = tf.layers.conv2d(x, n_out, 3, name=name+'.c2', kernel_regularizer=reg, padding='same')
+    if resample=='up':
+        y = nn_upscale(inputs, 2)
+    else:
+        y = tf.layers.average_pooling2d(inputs, 2, 2)
+    y = tf.layers.conv2d(y, n_out, 1, name=name+'.shortcut', kernel_regularizer=reg, padding='same')
+    return x + y
+
+
+def ResNetSmallGenerator(z, img_shape, l2_penalty, act_fn=tf.nn.relu, out_fn=tf.nn.tanh, train=True):
+    n_hidden = 64*8
+    x = z
+    x = tf.layers.dense(x, 4*4*n_hidden, name='Generator.Input')
+    x = tf.reshape(x, [-1, 4, 4, n_hidden])
+    n_repeat = int(np.log2(img_shape[0] / 4))
+    for i in range(n_repeat):
+        x = ResidualBlock2d(x, 'Gen02%d' % i, n_hidden, l2_penalty, resample='up')
+        n_hidden /= 2
+    x = tf.layers.batch_normalization(x, training=train, scale=False, epsilon=1e-5, momentum=0.9, name="Generator.Out.bn")
+    x = tf.nn.relu(x)
+    x = tf.layers.conv2d(x, img_shape[-1], 1, name='Generator.Output', padding='same')
+    x = out_fn(x)
+    return [x]
 
 
 # We use the tanh as suggest in in LeCun's "Efficient Backprop", so that
@@ -151,7 +189,8 @@ GENERATORS =  {
     'my-tanh': lambda z, img_shape, l2p: my_generator(z, img_shape, l2p, act_fn=tf.nn.relu, out_fn=tf.nn.tanh),
     'dcgan':      lambda z, img_shape, l2p: dcgan_generator(z, img_shape, l2p, act_fn=tf.nn.relu, out_fn=GENERATOR_OUT_FN),
     'began':      lambda z, img_shape, l2p: began_generator(z, img_shape, l2p, out_fn=GENERATOR_OUT_FN),
-    'billion_word': lambda z, img_shape, l2p: billion_word_generator(z, img_shape, l2p, act_fn=tf.nn.relu, train=True)
+    'billion_word': lambda z, img_shape, l2p: billion_word_generator(z, img_shape, l2p, act_fn=tf.nn.relu, train=True),
+    'good': lambda z, img_shape, l2p: ResNetSmallGenerator(z, img_shape, l2p, act_fn=tf.nn.relu, out_fn=GENERATOR_OUT_FN),
 }
 def create_generator(z, img_shape, l2_penalty, generator_type, batch_size=None):
     if generator_type not in GENERATORS:
@@ -237,15 +276,27 @@ def billion_word_discriminator(x, l2_penalty, n_hidden=512, n_output=1, trainabl
     output = tf.transpose(x, [0,2,1])
 
     output = tf.layers.conv1d(output, n_hidden, 1, name='Discriminator.Input', padding='same', data_format='channels_first')
-    output = ResBlock('Discriminator.1', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
-    output = ResBlock('Discriminator.2', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
-    output = ResBlock('Discriminator.3', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
-    output = ResBlock('Discriminator.4', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
-    output = ResBlock('Discriminator.5', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
+    output = ResBlock1d('Discriminator.1', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
+    output = ResBlock1d('Discriminator.2', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
+    output = ResBlock1d('Discriminator.3', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
+    output = ResBlock1d('Discriminator.4', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
+    output = ResBlock1d('Discriminator.5', output, n_hidden, l2_penalty=l2_penalty, activation=tf.nn.relu, use_batchnorm=False)
     output = tf.reshape(output, [-1, x.get_shape().as_list()[1] * n_hidden])
-    output = tf.layers.dense(output, n_output, name='Generator.Output')
+    output = tf.layers.dense(output, n_output, name='Discriminator.Output')
     layers = [output]
     return layers
+
+
+def ResNetSmallDiscriminator(x, n_output, n_hidden=64, l2_penalty=0.0, out_fn=None):
+
+    x = tf.layers.conv2d(x, n_hidden, 3, name='Discriminator.Input', padding='same')  
+    n_repeat = int(np.log2(int(x.get_shape()[1]) / 4))
+    for i in range(n_repeat):
+        n_hidden *= 2
+        x = ResidualBlock2d(x, 'Disc%02d' % i, n_hidden, l2_penalty, resample='down')
+    x = tf.reshape(x, [tf.shape(x)[0], np.prod(x.get_shape().as_list()[1:])])
+    x = tf.layers.dense(x, n_output, activation=out_fn)
+    return [x]
 
 
 DISCRIMINATORS =  {
@@ -254,7 +305,8 @@ DISCRIMINATORS =  {
         'my':      lambda a, l2p: my_discriminator(a, n_output=1, l2_penalty=l2p),
         'my-big':  lambda a, l2p: my_discriminator(a, n_output=1, n_hidden=128, l2_penalty=l2p),
         'my-big2': lambda a, l2p: my_discriminator(a, n_output=1, n_hidden=256, l2_penalty=l2p),
-        'billion_word': lambda a, l2p: billion_word_discriminator(a, n_output=1, n_hidden=512, l2_penalty=l2p)
+        'billion_word': lambda a, l2p: billion_word_discriminator(a, n_output=1, n_hidden=512, l2_penalty=l2p),
+        'resnet8': lambda a, l2p: ResNetSmallDiscriminator(a, n_output=1, l2_penalty=l2p)
     }
 def create_discriminator(x, discriminator_type, l2_penalty, reuse_vars):
     out_fn = None
