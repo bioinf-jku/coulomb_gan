@@ -26,7 +26,6 @@ def print_info(msg, do_print, flush=True):
 
 import fid
 import models
-from cachedimagefolder import CachedImageFolder
 
 
 def calculate_squared_distances(a, b):
@@ -160,7 +159,7 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
             transform=tvt.Compose([tvt.ToTensor(), tvt.Normalize(m, s)]))
     elif dataset == 'cifar10':
         img_shape = [3, 32, 32]
-        data = dset.CIFAR10(root='/local00/bioinf/', download=True,
+        data = dset.CIFAR10(root='/tmp', download=True,
             transform=tvt.Compose([tvt.ToTensor(), tvt.Normalize(m, s)]))
     dataloader = torch.utils.data.DataLoader(data, batch_size=batch_size, shuffle=True, num_workers=options.threads, pin_memory=True)
 
