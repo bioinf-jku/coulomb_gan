@@ -9,7 +9,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
-from biutils import startup_bookkeeping, plot_tiles, get_timestamp
+from utils import startup_bookkeeping, plot_tiles, get_timestamp
 
 import torch
 import torchvision.datasets as dset
