@@ -47,7 +47,7 @@ def startup_bookkeeping(logdir, curent_file):
 
     with open(logdir / "argv", 'w') as f:
         f.write(' '.join(sys.argv))
-    f.write("\n")
+        f.write("\n")
 
 
 def plot_tiles(data, nrows=8, ncols=8, ax=None, local_norm="maxabs", data_format='NWHC', **kwargs):
