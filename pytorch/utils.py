@@ -72,7 +72,10 @@ def plot_tiles(data, nrows=8, ncols=8, ax=None, local_norm="maxabs", data_format
     elif len(data.shape) == 3: # single color channel
         w, h, c = data.shape[1], data.shape[2], 1
     elif len(data.shape) == 4:
-        n, w, h, c = data.shape
+        if data_format == 'NWHC':
+            n, w, h, c = data.shape
+        else:
+            n, c, w, h = data.shape
     else:
         raise RuntimeError("Unable to determine shape of images")
 
