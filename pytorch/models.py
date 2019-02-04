@@ -138,18 +138,20 @@ class MyDiscriminator(BaseModule):
         n_hidden=self._n_initial_hidden
         layers = []
         n_repeat = int(np.log2(128 / 8))
+        img_res = img_shape[-1]
         for i in range(n_repeat):
             n_in = img_shape[0] if i == 0 else n_hidden // 2
             layers.append(nn.Conv2d(n_in, n_hidden, 5, 2, padding=2))
             layers.append(nn.BatchNorm2d(n_hidden, momentum=0.99, eps=1e-3))
             layers.append(nn.LeakyReLU(0.2))
             n_hidden *= 2
+            img_res //= 2
         for l in layers:
             if isinstance(l, nn.Conv2d):
                 nn.init.kaiming_uniform(l.weight.data, a=0.2)
                 l.bias.data[:] = 0.0
         self.main = nn.Sequential(*layers)
-        self.projection = nn.Linear(2*n_hidden, 1)
+        self.projection = nn.Linear(img_res*img_res*(n_hidden//2), 1)
         self._filter_parameters(self.projection)
         self._filter_parameters(self.main)
 
