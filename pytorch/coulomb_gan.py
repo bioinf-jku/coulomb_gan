@@ -84,34 +84,35 @@ def mean_squared_error(x, y):
 
 
 def calculate_fid(generator, fid_net, mu_fid, sigma_fid, n_samples, batch_size, gpu_id):
-    fid_net.transform_input=False
-    mean = torch.Tensor([0.485, 0.456, 0.406])[None, :, None, None]
-    std = torch.Tensor([0.229, 0.224, 0.225])[None, :, None, None]
-    if gpu_id != -1:
-        mean = mean.cuda()
-        std = std.cuda()
-    mean, std = Variable(mean, volatile=True), Variable(std, volatile=True)
-
-    n_iter = (n_samples // batch_size)+1
-    n = n_iter * batch_size
-    zz = torch.FloatTensor(batch_size, generator.latentsize)
-    act = torch.FloatTensor(n, 2048)
-    for i in range(n_iter):
-        zz.normal_()
-        z = Variable(zz, volatile=True)
+    with torch.no_grad():
+        fid_net.transform_input=False
+        mean = torch.Tensor([0.485, 0.456, 0.406])[None, :, None, None]
+        std = torch.Tensor([0.229, 0.224, 0.225])[None, :, None, None]
         if gpu_id != -1:
-            z = z.cuda()
-        x = generator(z)
-        x = (torch.clamp(x, -1.0, +1.0) + 1.0) / 2.0
-        x -= mean
-        x /= std
-        x = F.upsample(x, 299, mode='bilinear')
-        a = fid_net(x)
-        act[(i*batch_size):(i+1)*batch_size] = a.data.cpu()
-    act = act.numpy()
-    mu = np.mean(act, axis=0, dtype=np.float64)
-    sigma = np.cov(act, rowvar=False)
-    return fid.calculate_frechet_distance(mu, sigma, mu_fid, sigma_fid)
+            mean = mean.cuda()
+            std = std.cuda()
+        mean, std = Variable(mean), Variable(std)
+
+        n_iter = (n_samples // batch_size)+1
+        n = n_iter * batch_size
+        zz = torch.FloatTensor(batch_size, generator.latentsize)
+        act = torch.FloatTensor(n, 2048)
+        for i in range(n_iter):
+            zz.normal_()
+            z = Variable(zz)
+            if gpu_id != -1:
+                z = z.cuda()
+            x = generator(z)
+            x = (torch.clamp(x, -1.0, +1.0) + 1.0) / 2.0
+            x -= mean
+            x /= std
+            x = F.upsample(x, 299, mode='bilinear')
+            a = fid_net(x)
+            act[(i*batch_size):(i+1)*batch_size] = a.data.cpu()
+        act = act.numpy()
+        mu = np.mean(act, axis=0, dtype=np.float64)
+        sigma = np.cov(act, rowvar=False)
+        return fid.calculate_frechet_distance(mu, sigma, mu_fid, sigma_fid)
 
 
 def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimension, epsilon, learning_rate, batch_size, options, logdir_base='/tmp'):
