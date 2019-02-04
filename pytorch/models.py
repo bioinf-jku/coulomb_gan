@@ -1,5 +1,6 @@
 import numpy as np
 from torch import nn
+import torch
 import torch.nn.functional as F
 
 
@@ -58,7 +59,7 @@ class DcganGenerator(nn.Module):
         layers.append(nn.Tanh())
         for l in layers:
             if isinstance(l, nn.ConvTranspose2d):
-                nn.init.kaiming_uniform(l.weight.data, a=0)
+                nn.init.kaiming_uniform_(l.weight.data, a=0)
         self.main = nn.Sequential(*layers)
         #self._filter_parameters(self.main)
 
@@ -66,8 +67,8 @@ class DcganGenerator(nn.Module):
         #x = self.projection(x)
         x = x.view(-1, self.latentsize, 1, 1)
         x = self.main(x)
-        #x = 1.7159 * F.tanh(x * 2.0 / 3.0)
-        x = F.tanh(x)
+        #x = 1.7159 * torch.tanh(x * 2.0 / 3.0)
+        x = torch.tanh(x)
         return x
 
 
@@ -87,7 +88,7 @@ class DcganDiscriminator(nn.Module):
         layers.append(nn.Conv2d(n_hidden // 2, 1, 4, 1, 0))
         for l in layers:
             if isinstance(l, nn.Conv2d):
-                nn.init.kaiming_uniform(l.weight.data, a=0.2)
+                nn.init.kaiming_uniform_(l.weight.data, a=0.2)
         self.main = nn.Sequential(*layers)
         #self._filter_parameters(self.main)
 
@@ -115,7 +116,7 @@ class MyGenerator(BaseModule):
         layers.append(nn.ConvTranspose2d(n_filter, img_shape[0], 5, 2, padding=2, output_padding=1))
         for l in layers:
             if isinstance(l, nn.ConvTranspose2d):
-                nn.init.kaiming_uniform(l.weight.data, a=0.0)
+                nn.init.kaiming_uniform_(l.weight.data, a=0.0)
                 l.bias.data[:] = 0.0
         self.main = nn.Sequential(*layers)
         self._filter_parameters(self.projection)
@@ -126,8 +127,8 @@ class MyGenerator(BaseModule):
         x = F.relu(x)
         x = x.view(-1, self.init_filter, self.init_res, self.init_res)
         x = self.main(x)
-        #x = 1.7159 * F.tanh(x * 2.0 / 3.0)
-        x = F.tanh(x)
+        #x = 1.7159 * torch.tanh(x * 2.0 / 3.0)
+        x = torch.tanh(x)
         return x
 
 
@@ -148,7 +149,7 @@ class MyDiscriminator(BaseModule):
             img_res //= 2
         for l in layers:
             if isinstance(l, nn.Conv2d):
-                nn.init.kaiming_uniform(l.weight.data, a=0.2)
+                nn.init.kaiming_uniform_(l.weight.data, a=0.2)
                 l.bias.data[:] = 0.0
         self.main = nn.Sequential(*layers)
         self.projection = nn.Linear(img_res*img_res*(n_hidden//2), 1)
@@ -234,7 +235,7 @@ class SmallResnetGenerator(BaseModule):
         layers.append(nn.ConvTranspose2d(n_filter, img_shape[0], 5, 2, padding=2, output_padding=1))
         for l in layers:
             if isinstance(l, nn.ConvTranspose2d):
-                nn.init.kaiming_uniform(l.weight.data, a=0.0)
+                nn.init.kaiming_uniform_(l.weight.data, a=0.0)
                 l.bias.data[:] = 0.0
         self.main = nn.Sequential(*layers)
         self._filter_parameters(self.projection)

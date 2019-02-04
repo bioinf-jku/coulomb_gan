@@ -83,9 +83,8 @@ def mean_squared_error(x, y):
     return d.mean()
 
 
-def calculate_fid(generator, fid_net, mu_fid, sigma_fid, n_samples, batch_size, gpu_id):
+def calculate_fid(generator, fid_net, mu_fid, sigma_fid, n_samples, batch_size, latentsize, gpu_id):
     with torch.no_grad():
-        fid_net.transform_input=False
         mean = torch.Tensor([0.485, 0.456, 0.406])[None, :, None, None]
         std = torch.Tensor([0.229, 0.224, 0.225])[None, :, None, None]
         if gpu_id != -1:
@@ -95,7 +94,7 @@ def calculate_fid(generator, fid_net, mu_fid, sigma_fid, n_samples, batch_size, 
 
         n_iter = (n_samples // batch_size)+1
         n = n_iter * batch_size
-        zz = torch.FloatTensor(batch_size, generator.latentsize)
+        zz = torch.FloatTensor(batch_size, latentsize)
         act = torch.FloatTensor(n, 2048)
         for i in range(n_iter):
             zz.normal_()
@@ -106,7 +105,7 @@ def calculate_fid(generator, fid_net, mu_fid, sigma_fid, n_samples, batch_size, 
             x = (torch.clamp(x, -1.0, +1.0) + 1.0) / 2.0
             x -= mean
             x /= std
-            x = F.upsample(x, 299, mode='bilinear')
+            x = F.interpolate(x, 299, mode='bilinear')
             a = fid_net(x)
             act[(i*batch_size):(i+1)*batch_size] = a.data.cpu()
         act = act.numpy()
@@ -170,11 +169,15 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
     mu_fid, sigma_fid = f['mu'][:], f['sigma'][:]
     f.close()
     fid_net = fid.get_fid_network()
+    fid_net = torch.jit.trace(fid_net, torch.randn(batch_size, *img_shape))
     if options.gpu > -1:
         fid_net = fid_net.cuda()
 
     generator = models.GENERATORS[generator_type](latentsize, img_shape)
     discriminator = models.DISCRIMINATORS[discriminator_type](img_shape)
+
+    generator = torch.jit.trace(generator, torch.randn(batch_size, latentsize))
+    discriminator = torch.jit.trace(discriminator, torch.randn(batch_size, *img_shape))
 
     if options.resume_checkpoint:
         generator.load_state_dict(torch.load(options.resume_checkpoint + '.generator'))
@@ -232,7 +235,7 @@ def run(dataset, generator_type, discriminator_type, latentsize, kernel_dimensio
                 torch.save(discriminator.state_dict(), fn_prefix + '.discriminator')
 
             if cur_iter % options.stats_every == 0:
-                fid_value = calculate_fid(generator, fid_net, mu_fid, sigma_fid, 5*1024, batch_size, options.gpu)
+                fid_value = calculate_fid(generator, fid_net, mu_fid, sigma_fid, 5*1024, batch_size, latentsize, options.gpu)
                 #fid_value = -1
 
                 xx_img = (torch.clamp(x, -1.0, +1.0) + 1.0) / 2.0
